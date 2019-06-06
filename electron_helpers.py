@@ -1,3 +1,6 @@
+"""
+Helper functions for producing the plots required for the paper
+"""
 from read_root_output import make_irfs_from_root
 from scipy.ndimage import median_filter
 from electron_fitter import *
@@ -13,6 +16,7 @@ __all__ = ['create_fitter', 'spectral_feature_significance', 'observation_time_c
 
 def median_filter_templates(template, filter_size=(2, 3)):
     """
+    Perform simple median filtering on the classifier templates
 
     :param template: ndarray
         2D classifier template
@@ -95,9 +99,30 @@ def create_fitter(electron_file, proton_file,
 def get_spectral_points(total_template, spec_fitter, time,
                            electron_spectrum, electron_spectrum_parameters,
                            proton_spectrum=None, proton_spectrum_parameters=None):
+    """
+    Create realisation of a spectral points for a given spectral model
 
+    :param total_template: ndarray
+        2D template for fitting
+    :param spec_fitter: ElectronFitter
+        ElectronFitter object to perform model fit
+    :param time: float
+        Simulated time (seconds)
+    :param electron_spectrum: function_ptr
+        Pointer to electron spectrum function
+    :param electron_spectrum_parameters: dict
+        Dictionary of electron spectrum function inputs
+    :param proton_spectrum: function_ptr
+        Pointer to proton spectrum function
+    :param proton_spectrum_parameters: dict
+        Dictionary of proton spectrum function inputs
+    :return:
+        (energy bin centre, flux points, flux error)
+    """
+
+    # Create Poissonian realisation of the measured template
     template_rand = poisson(total_template[0] * time)
-
+    # Perform spectral fit
     energy, flux, error = spec_fitter.get_spectral_points(template_rand, time,
                                                           electron_spectrum,
                                                           electron_spectrum_parameters,
@@ -111,16 +136,47 @@ def get_fit_envelope(total_template, spec_fitter, time,
                      electron_spectrum, electron_spectrum_parameters,
                      proton_spectrum=None, proton_spectrum_parameters=None,
                      num_eval=100, energies=np.logspace(-2,3,1000)):
+    """
+    Create envelope of a number of spectral sits to different realisations of the
+    templates
+
+    :param total_template: ndarray
+        2D template for fitting
+    :param spec_fitter: ElectronFitter
+        ElectronFitter object to perform model fit
+    :param time: float
+        Simulated time (seconds)
+    :param electron_spectrum: function_ptr
+        Pointer to electron spectrum function
+    :param electron_spectrum_parameters: dict
+        Dictionary of electron spectrum function inputs
+    :param proton_spectrum: function_ptr
+        Pointer to proton spectrum function
+    :param proton_spectrum_parameters: dict
+        Dictionary of proton spectrum function inputs
+    :param num_eval: int
+        Number of realisations to fit
+    :param energies: ndarray
+        Energies at which to evaluate model (TeV)
+    :return:
+        (energy, fit envelope)
+    """
 
     envelope = []
+
+    # Loop over our number of required iterations
     for i in range(num_eval):
+        # Create a random realisation
         template_rand = poisson(total_template[0] * time)
 
+        # Fit the model to this
         vals, errors, like = spec_fitter.fit_model(template_rand, time,
                                                    electron_spectrum,
                                                    electron_spectrum_parameters,
                                                    proton_spectrum,
                                                    proton_spectrum_parameters)
+
+        # Evaluate the model at our energies and add to the envelope
         envelope.append(electron_spectrum(energies, **vals))
 
     return energies, np.array(envelope)
@@ -172,31 +228,103 @@ def spectral_feature_significance(electron_file, proton_file,
         Significance
     """
 
-    # First create the
+    # First create the fitter object
     template, fitter = create_fitter(electron_file, proton_file,
                                      electron_spectrum_simulation,
                                      electron_simulation_parameters,
                                      power_law_proton, {},
                                      telescope_multiplicity=telescope_multiplicity)
-    lr = []
+    lr = [] # Likelihood ration list
+
+    # Loop over required iterations
     for i in range(iterations):
+
+        # Create a random realisation
         template_rand = poisson(template[0] * observation_time)
+
+        # Fit our null model to this realisation
         vals, errors, likelihood = fitter.fit_model(template_rand, observation_time,
                                                     electron_spectrum_null_model,
                                                     electron_null_parameters,
                                                     energy_range=energy_range)
+        # Then our test model
         vals, errors, likelihood2 = fitter.fit_model(template_rand, observation_time,
                                                      electron_spectrum_test_model,
                                                      electron_test_parameters,
                                                      energy_range=energy_range)
 
+        # If the fit didn't work ignore it
         if np.isnan(likelihood) or np.isnan(likelihood2):
             continue
+        # Create likelihood ratio
         lr.append(likelihood - likelihood2)
 
+    # Take the mean of this value
     med_diff = np.mean(lr)
 
+    # Return the gaussian significance
     return gaus.isf(chi2.pdf(med_diff, degrees_of_freedom))
+
+
+def estimate_time_requirement(time, significance, target_significance=5):
+    """
+    Estimate the required time needed to reach a given significance level,
+    given current significance
+
+    :param time: float
+        Time of current simulation
+    :param significance: float
+        Significance of current simulation
+    :param target_significance: float
+        Target significance level to reach
+    :return: float
+        Time estimate
+    """
+
+    sigma_sqrt_time = significance / np.sqrt(time)
+
+    # If significance is infinite likely our time was too long
+    if np.isinf(significance):
+        time_est = time / 10
+    # And if NaN too short
+    elif np.isnan(significance):
+        time_est = time * 10
+    else:
+        # Otherwise time estimate scale by square of significance
+        time_est = np.power(target_significance / sigma_sqrt_time, 2)
+
+    return time_est
+
+
+def estimate_flux_requirement(flux, significance, target_significance=5):
+    """
+    Estimate the required source flux needed to reach a given significance level,
+    given current significance
+
+    :param flux: float
+        Flux level of current simulation (arb units)
+    :param significance: float
+        Significance of current simulation
+    :param target_significance:  float
+        Target significance level to reach
+    :return: float
+        Flux estimate
+    """
+
+    # If significance is infinite likely our time was too long
+    if np.isinf(significance):
+        flux_est = flux / 10
+    # And if NaN too short
+    elif np.isnan(significance):
+        flux_est = flux * 10
+    # If 0 also too short
+    elif significance == 0.0:
+        flux_est = flux * 10
+    else:
+        # Otherwise significance scales linearly with flux
+        flux_est = flux * np.power(target_significance / significance, 1)
+
+    return flux_est
 
 
 def observation_time_cutoff(electron_file, proton_file, cutoff, cut_power,
@@ -233,13 +361,8 @@ def observation_time_cutoff(electron_file, proton_file, cutoff, cut_power,
                                              "inverse_cut": (cutoff, (0., 1)),
                                              "cut_power": (3, (0.5, 5))},
                                             iterations=iterations)
-        sigma_sqrt_time = sig / np.sqrt(time)
-        if np.isinf(sig):
-            time_est = time / 10
-        elif np.isnan(sig):
-            time_est = time * 10
-        else:
-            time_est = np.power(sig_threshold / sigma_sqrt_time, 2)
+
+        time_est = estimate_time_requirement(time, sig, sig_threshold)
 
         print(("Sig:", sig, "Time:", time / 3600., "Iterations:", iterations))
         iterations = int(iterations * 1.5)
@@ -289,13 +412,7 @@ def observation_time_new_power_law(electron_file, proton_file, norm, index,
                                              (decorr_energy, decorr_energy))},
                                             iterations=iterations)
 
-        sigma_sqrt_time = sig / np.sqrt(time)
-        if np.isinf(sig):
-            time_est = time / 10
-        elif np.isnan(sig):
-            time_est = time * 10
-        else:
-            time_est = np.power(sig_threshold / sigma_sqrt_time, 2)
+        time_est = estimate_time_requirement(time, sig, sig_threshold)
 
         print(("Sig:", sig, "Time:", time / 3600., "Iterations:", iterations,
               "Est time", time_est / 3600.))
@@ -308,6 +425,19 @@ def make_sensitivity_curve(electron_file, proton_file, time,
                            sig_threshold=5, sig_accuracy=0.01, min_iterations=100,
                            output_file=None,
                            telescope_multiplicity=5):
+    """
+
+    :param electron_file:
+    :param proton_file:
+    :param time:
+    :param energy_bins:
+    :param sig_threshold:
+    :param sig_accuracy:
+    :param min_iterations:
+    :param output_file:
+    :param telescope_multiplicity:
+    :return:
+    """
 
     sensitivity = []
     bin_centre = np.power(10, np.log10(energy_bins[:-1]) +
@@ -325,7 +455,7 @@ def make_sensitivity_curve(electron_file, proton_file, time,
         count = 0
         while np.abs(sig_threshold - sig) > sig_accuracy or iterations < min_iterations:
             flux = flux_est
-            if flux < 1e-6 or flux > 1e6 or count>50:
+            if flux < 1e-6 or flux > 1e6 or count > 10:
                 sensitivity.append(np.nan)
                 break
 
@@ -345,26 +475,26 @@ def make_sensitivity_curve(electron_file, proton_file, time,
                                                 telescope_multiplicity=
                                                 telescope_multiplicity)
 
-            if np.isinf(sig):
-                flux_est = flux / 10
-            elif np.isnan(sig):
-                flux_est = flux * 10
-            elif sig == 0.0:
-                flux_est = flux * 10
+
+
+
+            estimate_flux_requirement(flux, sig, sig_threshold)
+
+            if np.isnan(sig) or np.isinf(sig):
+                count += 1
             else:
-                flux_est = flux * np.power(sig_threshold / sig, 1)
+                count = 0
                 iterations = int(iterations * 1.3)
-                if iterations > 5000:
-                    iterations = 5000
+
+            if iterations > 5000:
+                iterations = 5000
 
             print(("Sig:", sig, "Flux:", flux, "Iterations:", iterations, "Est flux",
                   flux_est))
-            count += 1
 
         sensitivity.append(flux * hess_electron_spectrum(energy_centre))
         print((energy_range, sig, energy_centre, flux))
 
-    print((bin_centre.shape, np.array(sensitivity).shape))
     if output_file:
         np.savetxt(output_file, np.vstack((bin_centre, np.array(sensitivity))).T)
 
