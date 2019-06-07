@@ -123,9 +123,15 @@ def get_spectral_points(total_template, spec_fitter, time,
     # Create Poissonian realisation of the measured template
     template_rand = poisson(total_template[0] * time)
     # Perform spectral fit
+    vals, errors, like = spec_fitter.fit_model(template_rand, time,
+                                               electron_spectrum,
+                                               electron_spectrum_parameters,
+                                               proton_spectrum,
+                                               proton_spectrum_parameters)
+
     energy, flux, error = spec_fitter.get_spectral_points(template_rand, time,
                                                           electron_spectrum,
-                                                          electron_spectrum_parameters,
+                                                          vals,
                                                           proton_spectrum,
                                                           proton_spectrum_parameters)
 
