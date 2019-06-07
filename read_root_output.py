@@ -112,7 +112,7 @@ def make_irfs_from_root(filename, spectral_function, spectral_parameters=None,
     mc_energy = (event_array["EnergyTrue"][selection_cuts])
     if energy_resolution:
         scatter = random_norm(loc=1, scale=energy_resolution, size=mc_energy.shape)
-        reconstructed_energy = np.log10(event_array["EnergyTrue"][selection_cuts] *
+        reconstructed_energy = np.log10(np.power(10, event_array["EnergyTrue"][selection_cuts]) *
                                         scatter)
     else:
         reconstructed_energy = (event_array["EnergyRec"][selection_cuts])
