@@ -329,16 +329,32 @@ def estimate_flux_requirement(flux, significance, target_significance=5):
 
 def observation_time_cutoff(electron_file, proton_file, cutoff, cut_power,
                             sig_threshold=3, sig_accuracy=0.01,
-                            min_iterations=100, start_time=100 * 3600):
+                            min_iterations=100, start_time=100 * 3600,
+                            telescope_multiplicity=5):
     """
+    Calculate time requirement to observe a cutoff on top of a HESS-like spectrum at a
+    given significance level
 
-    :param cutoff:
-    :param cut_power:
-    :param sig_threshold:
-    :param sig_accuracy:
-    :param min_iterations:
-    :param start_time:
-    :return:
+    :param electron_file: str
+        Electron input file name
+    :param proton_file: str
+        Proton input file name
+    :param cutoff: float
+        Cut off energy (TeV)
+    :param cut_power: float
+        Cut off power (TeV)
+    :param sig_threshold: float
+        Significance thrshold required
+    :param sig_accuracy: float
+        Accuracy of significance value
+    :param min_iterations: int
+        Minimum number of iterations required before value returned
+    :param start_time: float
+        Starting time tested
+    :param telescope_multiplicity: int
+        Minimum telescope multiplicity required
+    :return: float
+        Time to reach significance
     """
 
     time = start_time
@@ -348,6 +364,8 @@ def observation_time_cutoff(electron_file, proton_file, cutoff, cut_power,
     iterations = 20
 
     while np.abs(sig_threshold - sig) > sig_accuracy or iterations < min_iterations:
+        iterations = int(iterations * 1.5)
+
         time = time_est
         sig = spectral_feature_significance(electron_file, proton_file, time,
                                             electrons_plus_cut_off,
@@ -365,24 +383,39 @@ def observation_time_cutoff(electron_file, proton_file, cutoff, cut_power,
         time_est = estimate_time_requirement(time, sig, sig_threshold)
 
         print(("Sig:", sig, "Time:", time / 3600., "Iterations:", iterations))
-        iterations = int(iterations * 1.5)
     return time
 
 
 def observation_time_new_power_law(electron_file, proton_file, norm, index,
                                    decorr_energy, sig_threshold=3,
                                    sig_accuracy=0.01, min_iterations=100,
-                                   start_time=100 * 3600):
+                                   start_time=100 * 3600, telescope_multiplicity=5):
     """
+    Calculate time requirement to observe a new power-law on top of a HESS-like spectrum
+    at a given significance level
 
-    :param norm:
-    :param index:
-    :param decorr_energy:
-    :param sig_threshold:
-    :param sig_accuracy:
-    :param min_iterations:
-    :param start_time:
-    :return:
+    :param electron_file: str
+        Electron input file name
+    :param proton_file: str
+        Proton input file name
+    :param norm: float
+        Power law normalisation
+    :param index: float
+        Power law index
+    :param decorr_energy: float
+        Decorreleation energy of the power law
+    :param sig_threshold: float
+        Significance thrshold required
+    :param sig_accuracy: float
+        Accuracy of significance value
+    :param min_iterations: int
+        Minimum number of iterations required before value returned
+    :param start_time: float
+        Starting time tested
+    :param telescope_multiplicity: int
+        Minimum telescope multiplicity required
+    :return: float
+        Time to reach significance
     """
 
     time = start_time
@@ -392,8 +425,9 @@ def observation_time_new_power_law(electron_file, proton_file, norm, index,
     iterations = 20
 
     while np.abs(sig_threshold - sig) > sig_accuracy or iterations < min_iterations:
-        time = time_est
+        iterations = int(iterations * 1.5)
 
+        time = time_est
         sig = spectral_feature_significance(electron_file, proton_file, time,
                                             electrons_plus_power_law,
                                             {"electron_index2": 3.78,
@@ -416,7 +450,6 @@ def observation_time_new_power_law(electron_file, proton_file, norm, index,
 
         print(("Sig:", sig, "Time:", time / 3600., "Iterations:", iterations,
               "Est time", time_est / 3600.))
-        iterations = int(iterations * 1.3)
     return time
 
 
@@ -426,23 +459,37 @@ def make_sensitivity_curve(electron_file, proton_file, time,
                            output_file=None,
                            telescope_multiplicity=5):
     """
+    Create electron flux sensitivity curve, i.e. the flux required to reach a given
+    significance level within a time period
 
-    :param electron_file:
-    :param proton_file:
-    :param time:
-    :param energy_bins:
-    :param sig_threshold:
-    :param sig_accuracy:
-    :param min_iterations:
+    :param electron_file: str
+        Electron input file name
+    :param proton_file: str
+        Proton input file name
+    :param time: float
+        Time at which to evaluate sensitivity
+    :param energy_bins: ndarray
+        Energy bins in which to calculate sensitivity
+    :param sig_threshold: float
+        Significance thrshold required
+    :param sig_accuracy: float
+        Accuracy of significance value
+    :param min_iterations: int
+        Minimum number of iterations required before value returned
     :param output_file:
-    :param telescope_multiplicity:
-    :return:
+        Output file name
+    :param telescope_multiplicity: int
+        Minimum telescope multiplicity required
+    :return: (ndarray, ndarray)
+        (Centres of energy bins, sensitivity values)
     """
 
     sensitivity = []
+    # First calculate our energy bin centres
     bin_centre = np.power(10, np.log10(energy_bins[:-1]) +
                           np.diff(np.log10(energy_bins)) / 2.)
 
+    # Now loop over our energy bins
     for energy_bin in range(energy_bins.shape[0] - 1):
         iterations = 50
         sig = 0
@@ -452,6 +499,8 @@ def make_sensitivity_curve(electron_file, proton_file, time,
         energy_centre = np.power(10, np.log10(energy_bins[energy_bin]) +
                                  (np.log10(energy_bins[energy_bin + 1]) - np.log10(
                                      energy_bins[energy_bin])) / 2)
+
+        # Now loop in each bin to calculate the flux required to reach significance level
         count = 0
         while np.abs(sig_threshold - sig) > sig_accuracy or iterations < min_iterations:
             flux = flux_est
@@ -459,6 +508,8 @@ def make_sensitivity_curve(electron_file, proton_file, time,
                 sensitivity.append(np.nan)
                 break
 
+            # Calculate the significance of the electron spectrum in this energy bin in
+            # comparison to no electrons
             sig = spectral_feature_significance(electron_file, proton_file, time,
                                                 hess_electron_spectrum,
                                                 {
@@ -476,9 +527,8 @@ def make_sensitivity_curve(electron_file, proton_file, time,
                                                 telescope_multiplicity)
 
 
-
-
-            estimate_flux_requirement(flux, sig, sig_threshold)
+            # Estimate the next flux to test
+            flux_est = estimate_flux_requirement(flux, sig, sig_threshold)
 
             if np.isnan(sig) or np.isinf(sig):
                 count += 1
@@ -493,8 +543,8 @@ def make_sensitivity_curve(electron_file, proton_file, time,
                   flux_est))
 
         sensitivity.append(flux * hess_electron_spectrum(energy_centre))
-        print((energy_range, sig, energy_centre, flux))
 
+    # Save the output file if we want one
     if output_file:
         np.savetxt(output_file, np.vstack((bin_centre, np.array(sensitivity))).T)
 
