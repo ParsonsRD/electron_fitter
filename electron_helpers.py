@@ -1,7 +1,7 @@
 """
 Helper functions for producing the plots required for the paper
 """
-from read_root_output import make_irfs_from_root
+from read_root_output import make_irfs_from_root, make_irfs_from_pandas
 from scipy.ndimage import median_filter
 from electron_fitter import *
 import numpy as np
@@ -11,7 +11,7 @@ from numpy.random import poisson
 
 __all__ = ['create_fitter', 'spectral_feature_significance', 'observation_time_cutoff',
            'observation_time_new_power_law', 'make_sensitivity_curve',
-           'get_spectral_points', 'get_fit_envelope']
+           'get_spectral_points', 'get_fit_envelope', 'median_filter_templates']
 
 
 def median_filter_templates(template, filter_size=(2, 3)):
@@ -28,9 +28,75 @@ def median_filter_templates(template, filter_size=(2, 3)):
     template_used = template
     scale_fac = np.sum(template_used, axis=1)[..., np.newaxis]
     template_scaled = template_used / scale_fac
-    template_filter = median_filter(template_scaled, filter_size) * scale_fac
+    template_filter = median_filter(template_scaled, filter_size)
+    template_filter /= np.sum(template_filter, axis=1)[..., np.newaxis]
 
-    return template_filter
+    return template_filter * scale_fac
+
+
+def create_fitter_prod3(electron_file, electron_root_file, proton_file, proton_root_file,
+                        electron_spectrum, electron_spectrum_parameters,
+                        proton_spectrum, proton_spectrum_parameters,
+                        telescope_multiplicity=2, angular_cut=4, zeta_range=(0.2, 1),
+                        energy_resolution=None):
+    """
+    Funtion creates a spectrum fitting object, given a simulated spectral shape and
+    parameters and input files
+
+    :param electron_file: str
+        Electron file name
+    :param proton_file: str
+        Proton file name
+    :param electron_spectrum: function_ptr
+        Pointer to electron spectrum function
+    :param electron_spectrum_parameters: dict
+            Dictionary of electron spectrum function inputs
+    :param proton_spectrum: function_ptr
+        Pointer to proton spectrum function
+    :param proton_spectrum_parameters: dict
+        Dictionary of proton spectrum function inputs
+    :param telescope_multiplicity: int
+        Minimum telescope multiplicity
+    :param angular_cut: float
+        Maximum reconstructed event offset used
+    :param zeta_range: (float, float)
+        Range of zeta parameter used in templates
+    :return: (templates, ElectronSpectrumFit)
+        Templates and electron spectrum fitting object
+    """
+
+
+    # Create IRFs for Electrons and protons with the given spectra
+    electron_area, electron_migration, electron_template = make_irfs_from_pandas(
+        electron_file, electron_root_file,
+        electron_spectrum, electron_spectrum_parameters,
+        telescope_multiplicity=telescope_multiplicity,
+        angular_cut=angular_cut, zeta_range=zeta_range,
+        energy_resolution=energy_resolution)
+
+    proton_area, proton_migration, proton_template = make_irfs_from_pandas(
+        proton_file, proton_root_file, proton_spectrum,
+        proton_spectrum_parameters,
+        telescope_multiplicity=telescope_multiplicity,
+        angular_cut=angular_cut,
+        zeta_range=zeta_range)
+
+    # Aplly our median filter to reduce fluctutations
+    electron_template = median_filter_templates(electron_template[1], filter_size=(1, 3))
+    proton_template = median_filter_templates(proton_template[1], filter_size=(1, 1))
+    #electron_template = electron_template[1]
+    #proton_template = proton_template[1]
+
+    # Create spectral fitter object
+    spec_fitter = ElectronSpectrumFit(electron_migration[1], electron_area[1],
+                                      electron_template, proton_template,
+                                      electron_migration[0][0], electron_migration[0][1])
+
+    # Sum our templates to make an total measured expectation
+    total_template = electron_template + proton_template
+
+    # Return templates and fitting object
+    return (total_template, electron_template, proton_template), spec_fitter
 
 
 def create_fitter(electron_file, proton_file,
@@ -81,8 +147,8 @@ def create_fitter(electron_file, proton_file,
         zeta_range=zeta_range)
 
     # Aplly our median filter to reduce fluctutations
-    electron_template = median_filter_templates(electron_template[1], filter_size=(1, 3))
-    proton_template = median_filter_templates(proton_template[1], filter_size=(1, 3))
+    electron_template = median_filter_templates(electron_template[1], filter_size=(3, 1))
+    proton_template = median_filter_templates(proton_template[1], filter_size=(3, 1))
 
     # Create spectral fitter object
     spec_fitter = ElectronSpectrumFit(electron_migration[1], electron_area[1],
@@ -121,7 +187,10 @@ def get_spectral_points(total_template, spec_fitter, time,
     """
 
     # Create Poissonian realisation of the measured template
-    template_rand = poisson(total_template[0] * time)
+    input_template = total_template[0].astype(np.float64) * time
+    input_template[np.isnan(input_template)] = 0
+    template_rand = poisson(input_template.astype(np.float64))
+
     # Perform spectral fit
     vals, errors, like = spec_fitter.fit_model(template_rand, time,
                                                electron_spectrum,
@@ -173,8 +242,10 @@ def get_fit_envelope(total_template, spec_fitter, time,
     # Loop over our number of required iterations
     for i in range(num_eval):
         # Create a random realisation
-        template_rand = poisson(total_template[0] * time)
+        input_template = total_template[0].astype(np.float64) * time
+        input_template[np.isnan(input_template)] = 0
 
+        template_rand = poisson(input_template.astype(np.float64) )
         # Fit the model to this
         vals, errors, like = spec_fitter.fit_model(template_rand, time,
                                                    electron_spectrum,
@@ -246,8 +317,11 @@ def spectral_feature_significance(electron_file, proton_file,
     for i in range(iterations):
 
         # Create a random realisation
-        template_rand = poisson(template[0] * observation_time)
+        #template_rand = poisson(template[0].astype(np.float64) * observation_time)
+        input_template = template[0].astype(np.float64) * observation_time
+        input_template[np.isnan(input_template)] = 0
 
+        template_rand = poisson(input_template.astype(np.float64) )
         # Fit our null model to this realisation
         vals, errors, likelihood = fitter.fit_model(template_rand, observation_time,
                                                     electron_spectrum_null_model,

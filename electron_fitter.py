@@ -215,7 +215,6 @@ class ElectronSpectrumFit:
 
         return contributions
 
-
     def _get_expected_counts(self, fit_function, migration_matrix, effective_area,
                              **kwargs):
         """
@@ -245,7 +244,7 @@ class ElectronSpectrumFit:
         # Get area contribution matrix
         area_matrix = self._get_area_contribution(migration_matrix, effective_area)
 
-        flux = fit_function(integral_bins,** kwargs)
+        flux = fit_function(integral_bins,**kwargs)
         # Multiply by source flux
         flux = (eu - el) * (flux[:-1] + flux[1:])/2
         flux = np.sum(flux.reshape(self.true_energy_bins.shape[0], 100), axis=1)
@@ -470,8 +469,9 @@ class ElectronSpectrumFit:
                 # Perform migrad minimisation
                 minimised = minimize(scaled_spec, np.array([np.random.normal(1.0, 0.1)]),
                                      bounds=np.array([[0, 3]]))
-                fit_value = list(minimised.values())[5][0]
-                likelihood = list(minimised.values())[4]
+                #print(minimised)
+                fit_value = minimised["x"][0]
+                likelihood = minimised["fun"]
                 minuit = minimised["minuit"]
 
                 # Get the errors from MINOS
@@ -555,8 +555,8 @@ class ElectronSpectrumFit:
             return np.nan, np.nan, np.nan
 
         # Get the fit values
-        fit_values = dict(list(zip(self.variable_names, list(minimised.values())[5])))
-        likelihood = list(minimised.values())[4]
+        fit_values = dict(list(zip(self.variable_names, list(minimised["x"]))))
+        likelihood = minimised["fun"]
         minuit = minimised["minuit"]
 
         # Get the errors from MINOS
